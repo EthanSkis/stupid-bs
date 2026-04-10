@@ -6,6 +6,8 @@
 </head>
 <body>
   <h3>Chat with LM Studio via Telegram Bot</h3>
+  <label>Server URL: <input type="text" id="serverUrl" placeholder="https://your-server.com" /></label>
+  <br><br>
   <div id="messages"></div>
   <input type="text" id="input" placeholder="Type a message..." />
   <button onclick="send()">Send</button>
@@ -13,6 +15,13 @@
   <script>
     const messagesDiv = document.getElementById('messages');
     const input = document.getElementById('input');
+    const serverUrlInput = document.getElementById('serverUrl');
+
+    // Load saved server URL
+    serverUrlInput.value = localStorage.getItem('serverUrl') || '';
+    serverUrlInput.addEventListener('change', () => {
+      localStorage.setItem('serverUrl', serverUrlInput.value.trim());
+    });
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') send();
@@ -21,12 +30,18 @@
     async function send() {
       const text = input.value.trim();
       if (!text) return;
-      input.value = '';
 
+      const serverUrl = serverUrlInput.value.trim();
+      if (!serverUrl) {
+        appendMsg('Error', 'Set the server URL first');
+        return;
+      }
+
+      input.value = '';
       appendMsg('You', text);
 
       try {
-        const res = await fetch('/chat', {
+        const res = await fetch(serverUrl + '/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: text })

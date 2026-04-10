@@ -1,6 +1,4 @@
 const http = require('http');
-const fs = require('fs');
-const path = require('path');
 const TelegramBot = require('node-telegram-bot-api');
 
 // --- Config ---
@@ -51,12 +49,18 @@ bot.on('polling_error', (err) => {
   console.error('Telegram polling error:', err.message);
 });
 
-// --- HTTP Server for HTML chat ---
+// --- CORS headers ---
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type'
+};
+
+// --- HTTP Server (API only, HTML hosted externally) ---
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
-    const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(html);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders);
+    res.end();
     return;
   }
 
@@ -67,17 +71,17 @@ const server = http.createServer(async (req, res) => {
       try {
         const { message } = JSON.parse(body);
         const reply = await askLMStudio(message);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { ...corsHeaders, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ reply }));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.writeHead(500, { ...corsHeaders, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ reply: `Error: ${err.message}` }));
       }
     });
     return;
   }
 
-  res.writeHead(404);
+  res.writeHead(404, corsHeaders);
   res.end('Not found');
 });
 
