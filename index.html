@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Test</title>
+</head>
+<body>
+  <h3>Chat with LM Studio via Telegram Bot</h3>
+  <div id="messages"></div>
+  <input type="text" id="input" placeholder="Type a message..." />
+  <button onclick="send()">Send</button>
+
+  <script>
+    const messagesDiv = document.getElementById('messages');
+    const input = document.getElementById('input');
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') send();
+    });
+
+    async function send() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+
+      appendMsg('You', text);
+
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        const data = await res.json();
+        appendMsg('Bot', data.reply);
+      } catch (err) {
+        appendMsg('Error', err.message);
+      }
+    }
+
+    function appendMsg(sender, text) {
+      const p = document.createElement('p');
+      p.textContent = `${sender}: ${text}`;
+      messagesDiv.appendChild(p);
+    }
+  </script>
+</body>
+</html>
