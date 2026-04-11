@@ -1,63 +1,165 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Chat Test</title>
+<meta charset="UTF-8">
+<title>Spin for Compliment</title>
+<style>
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #8a1c2a, #3a0d0d);
+    color: #fff4d6;
+  }
+
+  .container {
+    text-align: center;
+    background: linear-gradient(145deg, #a61d2a, #7a141f);
+    padding: 50px;
+    border-radius: 20px;
+    border: 4px solid #c9a13b;
+    box-shadow:
+      inset 0 2px 6px rgba(255,255,255,0.15),
+      inset 0 -6px 12px rgba(0,0,0,0.4),
+      0 10px 25px rgba(0,0,0,0.5);
+  }
+
+  h1 {
+    margin-bottom: 35px;
+    font-weight: 600;
+    color: #f2d27a;
+    letter-spacing: 1px;
+  }
+
+  .sentence {
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .box {
+    min-width: 130px;
+    padding: 16px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #fff8dc, #e6c76a);
+    color: #3a2a00;
+    font-size: 19px;
+    text-transform: capitalize;
+    border: 2px solid #c9a13b;
+    box-shadow:
+      inset 0 3px 6px rgba(255,255,255,0.5),
+      inset 0 -4px 6px rgba(0,0,0,0.15);
+  }
+
+  .spin {
+    animation: spin 0.1s linear infinite;
+  }
+
+  @keyframes spin {
+    0% { transform: translateY(-5px); }
+    50% { transform: translateY(5px); }
+    100% { transform: translateY(-5px); }
+  }
+
+  button {
+    margin-top: 30px;
+    padding: 14px 34px;
+    font-size: 17px;
+    border-radius: 10px;
+    border: 2px solid #c9a13b;
+    background: linear-gradient(180deg, #f0c14b, #c9982f);
+    color: #4a2c00;
+    cursor: pointer;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    box-shadow:
+      0 4px 0 #8c6a2f,
+      0 8px 15px rgba(0,0,0,0.4);
+    transition: all 0.1s ease;
+  }
+
+  button:active {
+    transform: translateY(3px);
+    box-shadow:
+      0 2px 0 #8c6a2f,
+      0 5px 10px rgba(0,0,0,0.4);
+  }
+
+  button:hover {
+    background: linear-gradient(180deg, #f5cf5c, #d4a73a);
+  }
+
+</style>
 </head>
 <body>
-  <h3>Chat with LM Studio via Telegram Bot</h3>
-  <label>Server URL: <input type="text" id="serverUrl" placeholder="https://your-server.com" /></label>
-  <br><br>
-  <div id="messages"></div>
-  <input type="text" id="input" placeholder="Type a message..." />
-  <button onclick="send()">Send</button>
 
-  <script>
-    const messagesDiv = document.getElementById('messages');
-    const input = document.getElementById('input');
-    const serverUrlInput = document.getElementById('serverUrl');
+<div class="container">
+  <h1>Spin for Compliment</h1>
 
-    // Load saved server URL
-    serverUrlInput.value = localStorage.getItem('serverUrl') || '';
-    serverUrlInput.addEventListener('change', () => {
-      localStorage.setItem('serverUrl', serverUrlInput.value.trim());
-    });
+  <div class="sentence">
+    <span>You are a</span>
+    <div class="box" id="adj1">—</div>
+    <span>,</span>
+    <div class="box" id="adj2">—</div>
+    <div class="box" id="noun">—</div>
+  </div>
 
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') send();
-    });
+  <button onclick="generate()">SPIN</button>
+</div>
 
-    async function send() {
-      const text = input.value.trim();
-      if (!text) return;
+<script>
+const adjectives = [
+  "sparkly","feral","legendary",
+  "epic","chaotic","tremendous","glorious",
+  "radiant","unhinged","electric","snazzy","elite",
+  "wobbly","heroic","brilliant","zesty","dashing","swanky","elegant","classy",
+  "slick","dapper","rowdy","stoic","mystical","whimsical","flamboyant","ferocious","eccentric"
+];
 
-      const serverUrl = serverUrlInput.value.trim();
-      if (!serverUrl) {
-        appendMsg('Error', 'Set the server URL first');
-        return;
-      }
+const nouns = [
+  "goblin","stud","prodigy","dragon","toaster",
+  "hamster","cowboy","gremlin","wizard",
+  "hermit","platypus","fireball","giant","muffin",
+  "diva","clown","showboat","titan","viking","rock","unicorn","warlord","sherpa","ace"
+];
 
-      input.value = '';
-      appendMsg('You', text);
+function random(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
-      try {
-        const res = await fetch(serverUrl + '/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
-        });
-        const data = await res.json();
-        appendMsg('Bot', data.reply);
-      } catch (err) {
-        appendMsg('Error', err.message);
-      }
-    }
+function spin(el) {
+  el.classList.add("spin");
+}
 
-    function appendMsg(sender, text) {
-      const p = document.createElement('p');
-      p.textContent = `${sender}: ${text}`;
-      messagesDiv.appendChild(p);
-    }
-  </script>
+function stop(el, text) {
+  el.classList.remove("spin");
+  el.textContent = text;
+}
+
+function generate() {
+  const box1 = document.getElementById("adj1");
+  const box2 = document.getElementById("adj2");
+  const box3 = document.getElementById("noun");
+
+  spin(box1);
+  spin(box2);
+  spin(box3);
+
+  const a1 = random(adjectives);
+  const a2 = random(adjectives);
+  const n = random(nouns);
+
+  setTimeout(() => stop(box1, a1), 400);
+  setTimeout(() => stop(box2, a2), 700);
+  setTimeout(() => stop(box3, n), 1000);
+}
+</script>
+
 </body>
 </html>
