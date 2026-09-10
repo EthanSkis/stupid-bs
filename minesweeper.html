@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minesweeper</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d14; color: #e8ecf4; font-family: system-ui, "Segoe UI", Arial, sans-serif; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; user-select: none; -webkit-user-select: none; }
+  #top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .lcd { background: #000; color: #ff3b3b; font: bold 24px "Courier New", monospace; padding: 2px 8px; border-radius: 4px; min-width: 52px; text-align: center; letter-spacing: 2px; border: 1px solid #333; }
+  button, select { background: #1c2233; color: #e8ecf4; border: 1px solid #38415a; border-radius: 6px; padding: 6px 10px; font: 14px system-ui, "Segoe UI", Arial, sans-serif; cursor: pointer; }
+  button:hover, select:hover { background: #262e44; }
+  #face { font-size: 24px; padding: 2px 8px; line-height: 1; }
+  #flagmode.on { background: #7a2a1f; border-color: #f25f5c; }
+  #custom { display: none; gap: 6px; align-items: center; }
+  #custom input { width: 48px; background: #1c2233; color: #e8ecf4; border: 1px solid #38415a; border-radius: 4px; padding: 4px; font-size: 14px; }
+  canvas { display: block; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); touch-action: none; }
+  #hint { font-size: 12px; color: rgba(255,255,255,0.45); text-align: center; max-width: 900px; line-height: 1.6; padding: 0 12px; }
+  #hint b { color: rgba(255,255,255,0.75); font-weight: 600; }
+  #best { font-size: 12px; color: rgba(255,255,255,0.55); }
+</style>
+</head>
+<body>
+<div id="top">
+  <select id="diff">
+    <option value="beginner">Beginner 9x9, 10 mines</option>
+    <option value="intermediate">Intermediate 16x16, 40 mines</option>
+    <option value="expert">Expert 30x16, 99 mines</option>
+    <option value="custom">Custom</option>
+  </select>
+  <span id="custom">
+    <input id="cw" type="number" min="5" max="60" value="20" title="width">x
+    <input id="ch" type="number" min="5" max="40" value="12" title="height">
+    <input id="cm" type="number" min="1" max="999" value="35" title="mines">💣
+    <button id="capply">Go</button>
+  </span>
+  <div class="lcd" id="mines">010</div>
+  <button id="face" title="New game">🙂</button>
+  <div class="lcd" id="time">000</div>
+  <button id="flagmode" title="Toggle flag mode (F)">🚩 Flag mode: OFF</button>
+</div>
+<canvas id="board"></canvas>
+<div id="best"></div>
+<div id="hint">
+  <b>Reveal:</b> click &nbsp;·&nbsp; <b>Flag:</b> right-click, ctrl+click, long-press, Space while hovering, or turn on Flag mode (F) &nbsp;·&nbsp;
+  <b>Chord:</b> click a number whose flags are all placed to open the rest around it &nbsp;·&nbsp; <b>New game:</b> click the face or press N
+</div>
+<script>
+(() => {
+'use strict';
+
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d', { alpha: false });
+const $ = id => document.getElementById(id);
+const el = { diff: $('diff'), custom: $('custom'), cw: $('cw'), ch: $('ch'), cm: $('cm'), capply: $('capply'),
+  mines: $('mines'), face: $('face'), time: $('time'), flagmode: $('flagmode'), best: $('best') };
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+
+const PRESETS = {
+  beginner: [9, 9, 10],
+  intermediate: [16, 16, 40],
+  expert: [30, 16, 99],
+};
+const NUM_COLORS = ['', '#4cc9f0', '#4ade80', '#f25f5c', '#9b5de5', '#ff9f1c', '#1abc9c', '#e8ecf4', '#8d99ae'];
+
+// ---------------------------------------------------------------- state
+let cols = 9, rows = 9, mineCount = 10, diffName = 'beginner';
+let mine, rev, flag, adj, wrong;     // typed arrays, index = y * cols + x
+let state = 'ready';                 // ready | play | won | lost
+let revealed = 0, flags = 0;
+let startTime = 0, elapsed = 0, timerId = null;
+let flagMode = false;
+let cell = 32, pad = 6;
+let hover = -1, pressed = -1;
+let cursorX = 0, cursorY = 0, cursorOn = false;
+
+function idx(x, y) { return y * cols + x; }
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < cols && y < rows; }
+function neighbors(x, y, fn) {
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    if (!dx && !dy) continue;
+    const nx = x + dx, ny = y + dy;
+    if (inBounds(nx, ny)) fn(nx, ny, idx(nx, ny));
+  }
+}
+
+function newGame() {
+  const n = cols * rows;
+  mine = new Uint8Array(n); rev = new Uint8Array(n); flag = new Uint8Array(n); adj = new Uint8Array(n); wrong = new Uint8Array(n);
+  state = 'ready'; revealed = 0; flags = 0; elapsed = 0; startTime = 0;
+  if (timerId) { clearInterval(timerId); timerId = null; }
+  hover = -1; pressed = -1;
+  cursorX = Math.floor(cols / 2); cursorY = Math.floor(rows / 2); cursorOn = false;
+  el.face.textContent = '🙂';
+  updateLcds();
+  fit();
+  draw();
+}
+
+function placeMines(safeX, safeY) {
+  const n = cols * rows;
+  const safe = new Set();
+  safe.add(idx(safeX, safeY));
+  neighbors(safeX, safeY, (nx, ny, i) => safe.add(i));
+  let allowed = n - safe.size;
+  let count = Math.min(mineCount, allowed);
+  // if the board is nearly full of mines, shrink the safe zone to just the clicked cell
+  if (count < mineCount) { safe.clear(); safe.add(idx(safeX, safeY)); allowed = n - 1; count = Math.min(mineCount, allowed); }
+  mineCount = count;
+  const spots = [];
+  for (let i = 0; i < n; i++) if (!safe.has(i)) spots.push(i);
+  for (let k = 0; k < count; k++) {
+    const j = k + Math.floor(Math.random() * (spots.length - k));
+    const t = spots[k]; spots[k] = spots[j]; spots[j] = t;
+    mine[spots[k]] = 1;
+  }
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    let c = 0; neighbors(x, y, (nx, ny, i) => { c += mine[i]; });
+    adj[idx(x, y)] = c;
+  }
+  updateLcds();
+}
+
+function startTimer() {
+  state = 'play'; startTime = Date.now();
+  timerId = setInterval(() => { elapsed = Math.floor((Date.now() - startTime) / 1000); updateLcds(); }, 250);
+}
+function stopTimer() {
+  if (timerId) { clearInterval(timerId); timerId = null; }
+  if (startTime) elapsed = (Date.now() - startTime) / 1000;
+}
+
+function reveal(x, y) {
+  const i0 = idx(x, y);
+  if (rev[i0] || flag[i0]) return;
+  if (state === 'ready') { placeMines(x, y); startTimer(); }
+  if (mine[i0]) { lose(i0); return; }
+  const stack = [i0];
+  while (stack.length) {
+    const i = stack.pop();
+    if (rev[i]) continue;
+    rev[i] = 1; revealed++;
+    if (adj[i] === 0) {
+      const cx = i % cols, cy = (i - cx) / cols;
+      neighbors(cx, cy, (nx, ny, j) => { if (!rev[j] && !flag[j]) stack.push(j); });
+    }
+  }
+  checkWin();
+}
+function toggleFlag(x, y) {
+  const i = idx(x, y);
+  if (rev[i] || state === 'won' || state === 'lost') return;
+  if (state === 'ready') startTimer();
+  flag[i] ^= 1; flags += flag[i] ? 1 : -1;
+  updateLcds();
+}
+function chord(x, y) {
+  const i = idx(x, y);
+  if (!rev[i] || adj[i] === 0) return;
+  let f = 0; neighbors(x, y, (nx, ny, j) => { f += flag[j]; });
+  if (f !== adj[i]) return;
+  neighbors(x, y, (nx, ny, j) => { if (state === 'play' && !rev[j] && !flag[j]) reveal(nx, ny); });
+}
+function checkWin() {
+  if (state !== 'play') return;
+  if (revealed === cols * rows - mineCount) {
+    state = 'won'; stopTimer();
+    for (let i = 0; i < mine.length; i++) if (mine[i] && !flag[i]) { flag[i] = 1; flags++; }
+    el.face.textContent = '😎';
+    const key = 'ms_best_' + diffName;
+    const best = +store.get(key, 0);
+    if (diffName !== 'custom' && (!best || elapsed < best)) store.set(key, elapsed.toFixed(1));
+    updateLcds(); showBest();
+  }
+}
+function lose(hit) {
+  state = 'lost'; stopTimer();
+  for (let i = 0; i < mine.length; i++) {
+    if (mine[i] && !flag[i]) rev[i] = 1;
+    if (!mine[i] && flag[i]) wrong[i] = 1;
+  }
+  wrong[hit] = 2;
+  el.face.textContent = '😵';
+  updateLcds();
+}
+
+// ---------------------------------------------------------------- ui
+function lcd(n) { n = Math.max(-99, Math.min(999, Math.round(n))); return (n < 0 ? '-' : '') + String(Math.abs(n)).padStart(3, '0'); }
+function updateLcds() {
+  el.mines.textContent = lcd(mineCount - flags);
+  el.time.textContent = lcd(Math.floor(elapsed));
+}
+function showBest() {
+  if (diffName === 'custom') { el.best.textContent = ''; return; }
+  const b = store.get('ms_best_' + diffName, '');
+  el.best.textContent = b ? 'best ' + diffName + ': ' + (+b).toFixed(1) + 's' : 'no best time yet for ' + diffName;
+}
+function setFlagMode(v) {
+  flagMode = v;
+  el.flagmode.textContent = '🚩 Flag mode: ' + (v ? 'ON' : 'OFF');
+  el.flagmode.classList.toggle('on', v);
+  canvas.style.cursor = v ? 'crosshair' : 'pointer';
+}
+function applyDifficulty() {
+  const v = el.diff.value;
+  el.custom.style.display = v === 'custom' ? 'inline-flex' : 'none';
+  if (v === 'custom') {
+    cols = Math.max(5, Math.min(60, +el.cw.value || 20));
+    rows = Math.max(5, Math.min(40, +el.ch.value || 12));
+    mineCount = Math.max(1, Math.min(cols * rows - 9, +el.cm.value || 35));
+    el.cw.value = cols; el.ch.value = rows; el.cm.value = mineCount;
+  } else [cols, rows, mineCount] = PRESETS[v];
+  diffName = v;
+  store.set('ms_diff', v);
+  newGame(); showBest();
+}
+
+function fit() {
+  const availW = window.innerWidth - 24, availH = window.innerHeight - 150;
+  cell = Math.floor(Math.min((availW - pad * 2) / cols, (availH - pad * 2) / rows));
+  cell = Math.max(14, Math.min(40, cell));
+  canvas.width = cols * cell + pad * 2; canvas.height = rows * cell + pad * 2;
+}
+window.addEventListener('resize', () => { fit(); draw(); });
+
+// ---------------------------------------------------------------- drawing (only on change, not every frame)
+function draw() {
+  const w = canvas.width, h = canvas.height;
+  ctx.fillStyle = '#151a26'; ctx.fillRect(0, 0, w, h);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold ' + Math.floor(cell * 0.55) + 'px system-ui, "Segoe UI", Arial, sans-serif';
+  const numFont = ctx.font;
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const i = idx(x, y), px = pad + x * cell, py = pad + y * cell, cx = px + cell / 2, cy = py + cell / 2;
+    const isHover = i === hover && (state === 'ready' || state === 'play');
+    const isPressed = i === pressed;
+    if (rev[i]) {
+      ctx.fillStyle = wrong[i] === 2 ? '#7a1f1f' : (isHover && adj[i] > 0 ? '#1d2433' : '#161c2a');
+      ctx.fillRect(px, py, cell, cell);
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+      ctx.strokeRect(px + 0.5, py + 0.5, cell - 1, cell - 1);
+      if (mine[i]) {
+        ctx.fillStyle = '#e8ecf4';
+        ctx.beginPath(); ctx.arc(cx, cy, cell * 0.24, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#e8ecf4'; ctx.lineWidth = Math.max(1.5, cell * 0.06);
+        for (let k = 0; k < 4; k++) {
+          const a = k * Math.PI / 4;
+          ctx.beginPath(); ctx.moveTo(cx - Math.cos(a) * cell * 0.36, cy - Math.sin(a) * cell * 0.36); ctx.lineTo(cx + Math.cos(a) * cell * 0.36, cy + Math.sin(a) * cell * 0.36); ctx.stroke();
+        }
+        ctx.fillStyle = '#151a26'; ctx.beginPath(); ctx.arc(cx - cell * 0.08, cy - cell * 0.08, cell * 0.07, 0, Math.PI * 2); ctx.fill();
+      } else if (adj[i] > 0) {
+        ctx.font = numFont; ctx.fillStyle = NUM_COLORS[adj[i]];
+        ctx.fillText(String(adj[i]), cx, cy + 1);
+      }
+    } else {
+      // raised tile
+      let base = isPressed ? '#1d2433' : isHover ? '#3a4460' : '#2a3142';
+      if (cursorOn && x === cursorX && y === cursorY) base = '#3f4a6a';
+      ctx.fillStyle = base; ctx.fillRect(px, py, cell, cell);
+      if (!isPressed) {
+        ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(px, py, cell, 2); ctx.fillRect(px, py, 2, cell);
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(px, py + cell - 2, cell, 2); ctx.fillRect(px + cell - 2, py, 2, cell);
+      }
+      if (flag[i]) {
+        // flag: pole + triangle
+        const s = cell;
+        ctx.strokeStyle = '#e8ecf4'; ctx.lineWidth = Math.max(1.5, s * 0.07);
+        ctx.beginPath(); ctx.moveTo(cx - s * 0.05, cy - s * 0.28); ctx.lineTo(cx - s * 0.05, cy + s * 0.3); ctx.stroke();
+        ctx.fillStyle = wrong[i] === 1 ? '#8d99ae' : '#f25f5c';
+        ctx.beginPath(); ctx.moveTo(cx - s * 0.05, cy - s * 0.3); ctx.lineTo(cx + s * 0.3, cy - s * 0.12); ctx.lineTo(cx - s * 0.05, cy + s * 0.04); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#e8ecf4'; ctx.fillRect(cx - s * 0.22, cy + s * 0.26, s * 0.4, s * 0.07);
+        if (wrong[i] === 1) {
+          ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = Math.max(2, s * 0.08);
+          ctx.beginPath(); ctx.moveTo(px + s * 0.2, py + s * 0.2); ctx.lineTo(px + s * 0.8, py + s * 0.8); ctx.moveTo(px + s * 0.8, py + s * 0.2); ctx.lineTo(px + s * 0.2, py + s * 0.8); ctx.stroke();
+        }
+      }
+    }
+  }
+  if (state === 'won' || state === 'lost') {
+    ctx.fillStyle = state === 'won' ? 'rgba(20,60,40,0.55)' : 'rgba(60,15,20,0.55)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.font = 'bold ' + Math.max(22, Math.floor(Math.min(w, h) * 0.14)) + 'px system-ui, "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(state === 'won' ? 'CLEARED in ' + elapsed.toFixed(1) + 's' : 'BOOM', w / 2, h / 2 - 4);
+    ctx.font = Math.max(12, Math.floor(Math.min(w, h) * 0.05)) + 'px system-ui, "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText('click the face or press N for a new game', w / 2, h / 2 + Math.max(22, Math.min(w, h) * 0.11));
+  }
+}
+
+// ---------------------------------------------------------------- input
+function cellAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const x = Math.floor((clientX - r.left) * canvas.width / r.width - pad) / cell;
+  const y = Math.floor((clientY - r.top) * canvas.height / r.height - pad) / cell;
+  const cx = Math.floor(x), cy = Math.floor(y);
+  return inBounds(cx, cy) && x >= 0 && y >= 0 ? { x: cx, y: cy, i: idx(cx, cy) } : null;
+}
+function primary(c) {
+  // main action for a click: flag mode flags, otherwise reveal or chord
+  if (state === 'won' || state === 'lost') return;
+  if (flagMode) { if (rev[c.i]) chord(c.x, c.y); else toggleFlag(c.x, c.y); }
+  else if (rev[c.i]) chord(c.x, c.y);
+  else reveal(c.x, c.y);
+  draw();
+}
+function secondary(c) {
+  if (state === 'won' || state === 'lost') return;
+  if (rev[c.i]) chord(c.x, c.y); else toggleFlag(c.x, c.y);
+  draw();
+}
+
+let longPressId = null, longPressFired = false, downCell = null, downButton = 0;
+function cancelLongPress() { if (longPressId) { clearTimeout(longPressId); longPressId = null; } }
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  e.preventDefault();
+  const c = cellAt(e.clientX, e.clientY);
+  downCell = c; downButton = e.button; longPressFired = false;
+  cancelLongPress();
+  if (!c || state === 'won' || state === 'lost') return;
+  cursorOn = false;
+  if (e.button === 0 && !e.ctrlKey && !e.metaKey && !flagMode && !rev[c.i] && !flag[c.i]) {
+    pressed = c.i; el.face.textContent = '😮'; draw();
+  }
+  if (e.button === 0) {
+    longPressId = setTimeout(() => {
+      longPressId = null; longPressFired = true; pressed = -1;
+      if (!rev[c.i]) { toggleFlag(c.x, c.y); el.face.textContent = '🙂'; draw(); }
+    }, 420);
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  const c = cellAt(e.clientX, e.clientY);
+  const h = c ? c.i : -1;
+  if (downCell && (!c || c.i !== downCell.i)) { cancelLongPress(); if (pressed !== -1) { pressed = -1; } }
+  if (h !== hover) { hover = h; if (c) { cursorX = c.x; cursorY = c.y; } draw(); }
+});
+canvas.addEventListener('mouseleave', () => { hover = -1; pressed = -1; cancelLongPress(); draw(); });
+canvas.addEventListener('mouseup', e => {
+  e.preventDefault();
+  cancelLongPress();
+  const c = cellAt(e.clientX, e.clientY);
+  pressed = -1;
+  if (state === 'ready' || state === 'play') el.face.textContent = '🙂';
+  if (longPressFired || !c || !downCell || c.i !== downCell.i) { draw(); downCell = null; return; }
+  downCell = null;
+  if (e.button === 2 || e.button === 1 || ((e.button === 0) && (e.ctrlKey || e.metaKey))) secondary(c);
+  else if (e.button === 0) primary(c);
+});
+canvas.addEventListener('auxclick', e => e.preventDefault());
+
+// touch: tap reveals, long-press flags
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const c = cellAt(t.clientX, t.clientY);
+  downCell = c; longPressFired = false; cancelLongPress();
+  if (!c || state === 'won' || state === 'lost') return;
+  longPressId = setTimeout(() => {
+    longPressId = null; longPressFired = true;
+    if (!rev[c.i]) { toggleFlag(c.x, c.y); draw(); }
+  }, 380);
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const c = cellAt(t.clientX, t.clientY);
+  if (downCell && (!c || c.i !== downCell.i)) cancelLongPress();
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  cancelLongPress();
+  const t = e.changedTouches[0];
+  const c = cellAt(t.clientX, t.clientY);
+  if (!longPressFired && c && downCell && c.i === downCell.i) primary(c);
+  downCell = null;
+}, { passive: false });
+
+window.addEventListener('keydown', e => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+  const k = e.code;
+  if (k === 'KeyF') { setFlagMode(!flagMode); return; }
+  if (k === 'KeyN') { newGame(); return; }
+  if (k === 'Space') {
+    e.preventDefault();
+    if (state === 'won' || state === 'lost') { newGame(); return; }
+    // Space flags the hovered cell (or the keyboard cursor cell)
+    if (hover !== -1) { const x = hover % cols, y = (hover - x) / cols; if (rev[hover]) chord(x, y); else toggleFlag(x, y); draw(); }
+    else if (cursorOn) { if (rev[idx(cursorX, cursorY)]) chord(cursorX, cursorY); else toggleFlag(cursorX, cursorY); draw(); }
+    return;
+  }
+  if (k === 'Enter') {
+    if (state === 'won' || state === 'lost') { newGame(); return; }
+    if (cursorOn || hover !== -1) {
+      const x = cursorOn ? cursorX : hover % cols, y = cursorOn ? cursorY : (hover - hover % cols) / cols;
+      const i = idx(x, y);
+      if (rev[i]) chord(x, y); else reveal(x, y);
+      draw();
+    }
+    return;
+  }
+  const dirs = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0] };
+  if (dirs[k]) {
+    e.preventDefault();
+    cursorOn = true; hover = -1;
+    cursorX = Math.max(0, Math.min(cols - 1, cursorX + dirs[k][0]));
+    cursorY = Math.max(0, Math.min(rows - 1, cursorY + dirs[k][1]));
+    draw();
+  }
+});
+
+el.face.addEventListener('click', newGame);
+el.flagmode.addEventListener('click', () => setFlagMode(!flagMode));
+el.diff.addEventListener('change', applyDifficulty);
+el.capply.addEventListener('click', applyDifficulty);
+for (const inp of [el.cw, el.ch, el.cm]) inp.addEventListener('keydown', e => { if (e.key === 'Enter') applyDifficulty(); });
+
+// ---------------------------------------------------------------- boot
+const savedDiff = store.get('ms_diff', 'beginner');
+el.diff.value = (PRESETS[savedDiff] || savedDiff === 'custom') ? savedDiff : 'beginner';
+setFlagMode(false);
+applyDifficulty();
+})();
+</script>
+</body>
+</html>
